@@ -1,0 +1,69 @@
+{
+  "name": "focus-orders",
+  "version": "1.0.1",
+  "description": "Локальный чек-лист мебельных заказов",
+  "author": "Lizard51",
+  "private": true,
+  "main": "src/main.cjs",
+  "scripts": {
+    "test": "node scripts/run-tests.cjs",
+    "start": "electron .",
+    "check": "node scripts/check.cjs",
+    "test:desktop": "node scripts/test-desktop.cjs",
+    "build": "node scripts/prepare-assets.cjs && electron-builder --win nsis --x64 --publish never",
+    "test:ui": "node scripts/test-ui-accessibility.cjs",
+    "test:delete": "node scripts/test-delete.cjs",
+    "format": "prettier --write \"src/*.{cjs,js,css,html}\" \"scripts/*.cjs\"",
+    "format:check": "prettier --check \"src/*.{cjs,js,css,html}\" \"scripts/*.cjs\""
+  },
+  "devDependencies": {
+    "@fontsource-variable/manrope": "5.3.0",
+    "@tabler/icons": "3.49.0",
+    "electron": "44.7.0",
+    "electron-builder": "26.15.3",
+    "playwright": "1.64.0",
+    "prettier": "3.9.10"
+  },
+  "build": {
+    "appId": "local.focus.orders",
+    "productName": "Фокус — Заказы",
+    "artifactName": "Focus-Orders-Setup-${version}.${ext}",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "asar": true,
+    "win": {
+      "target": "nsis",
+      "signExecutable": false,
+      "icon": "src/assets/app-icon.ico"
+    },
+    "nsis": {
+      "deleteAppDataOnUninstall": false,
+      "createStartMenuShortcut": true,
+      "installerLanguages": [
+        "ru_RU"
+      ],
+      "language": "1049",
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "Фокус — Заказы",
+      "createDesktopShortcut": true,
+      "perMachine": false,
+      "runAfterFinish": false,
+      "oneClick": false
+    },
+    "copyright": "Copyright © 2026 Lizard51"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/Lizard51/focus-orders#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Lizard51/focus-orders.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Lizard51/focus-orders/issues"
+  }
+}

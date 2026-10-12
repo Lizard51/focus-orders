@@ -1,0 +1,9 @@
+node_modules/
+release/
+evidence/
+workers/
+tools/
+tests/
+src/assets/
+src/seed.json
+scripts/verify-seed.cjs

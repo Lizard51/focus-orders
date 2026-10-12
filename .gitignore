@@ -1,0 +1,35 @@
+# Only explicitly selected project files are public.
+/*
+!/.gitignore
+!/.gitattributes
+!/.prettierrc.json
+!/.prettierignore
+!/README.md
+!/LICENSE
+!/CHANGELOG.md
+!/THIRD_PARTY_NOTICES.md
+!/package.json
+!/package-lock.json
+!/src/
+!/tests/
+!/scripts/
+!/docs/
+!/.github/
+
+/docs/*
+!/docs/USER-GUIDE.md
+!/docs/DEVELOPMENT.md
+!/docs/ARCHITECTURE.md
+!/docs/images/
+
+# Original source comparison stays local; it reads a private handoff file.
+/scripts/verify-seed.cjs
+**/node_modules/
+**/.env
+**/.env.*
+**/state.json
+**/backups/
+**/*.log
+**/*.tmp
+**/Thumbs.db
+**/.DS_Store

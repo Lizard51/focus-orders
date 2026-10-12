@@ -1,0 +1,31 @@
+name: Ошибка в приложении
+description: Сообщить о проблеме с запуском, сохранением или интерфейсом
+title: "[Ошибка] "
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Версия приложения и Windows
+      placeholder: "Фокус 1.0.1, Windows 11 x64"
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Как повторить
+      description: Перечислите действия и ожидаемый результат.
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Что произошло
+      description: Точный текст ошибки или скриншот. Уберите личные данные и сведения о клиентах.
+    validations:
+      required: true
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Конфиденциальность
+      options:
+        - label: В сообщении нет базы заказов, резервных копий, личных данных клиентов или паролей.

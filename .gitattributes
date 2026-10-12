@@ -1,0 +1,14 @@
+* text=auto
+*.cjs text eol=lf
+*.js text eol=lf
+*.json text eol=lf
+*.html text eol=lf
+*.css text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.ps1 text eol=crlf
+*.png binary
+*.ico binary
+*.woff2 binary
+# Preserve frozen acceptance-test bytes on every platform.
+tests/*.test.cjs -text -eol
