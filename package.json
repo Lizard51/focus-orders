@@ -55,7 +55,21 @@
       "runAfterFinish": false,
       "oneClick": false
     },
-    "copyright": "Copyright © 2026 Lizard51"
+    "copyright": "Copyright © 2026 Lizard51",
+    "extraResources": [
+      {
+        "to": "licenses/Focus-Orders-MIT.txt",
+        "from": "LICENSE"
+      },
+      {
+        "to": "licenses/Manrope-OFL.txt",
+        "from": "src/assets/LICENSE-Manrope.txt"
+      },
+      {
+        "to": "licenses/Tabler-MIT.txt",
+        "from": "src/assets/LICENSE-Tabler.txt"
+      }
+    ]
   },
   "license": "MIT",
   "homepage": "https://github.com/Lizard51/focus-orders#readme",
