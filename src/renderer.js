@@ -10,6 +10,9 @@
         (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c],
       );
   const uid = () => crypto.randomUUID();
+  const defaultViews = ['items', 'fields', 'q', 'notes'];
+  const viewLabels = { items: 'Проверка', fields: 'Параметры', q: 'Вопросы', notes: 'Заметки' };
+  const sectionView = (s) => s.view || s.type;
   const icon = (n) =>
     `<svg class="ico" aria-hidden="true"><use href="assets/icons.svg#${n}"></use></svg>`;
   const button = (action, text, ico = '', cls = '', attrs = '') =>
@@ -20,6 +23,7 @@
     tabs = [],
     current = null,
     area = 'active',
+    searchQuery = '',
     view = 'items',
     selectedTemplate = null,
     backups = [],
@@ -28,7 +32,8 @@
     error = '',
     timer,
     chain = Promise.resolve(),
-    dialogReturn;
+    dialogReturn,
+    moving = null;
   const drafts = new Map();
   const record = (kind, id) =>
     snapshot[kind === 'order' ? 'orders' : 'templates'].find((x) => x.id === id);
@@ -96,8 +101,19 @@
         const v = clone(d.value);
         const patch =
           d.kind === 'order'
-            ? { number: v.number, name: v.name, notes: v.notes, sections: v.sections }
-            : { name: v.name, sections: v.sections };
+            ? {
+                number: v.number,
+                name: v.name,
+                notes: v.notes,
+                sections: v.sections,
+                ...(v.block === undefined ? {} : { block: v.block }),
+                ...(v.viewOrder === undefined ? {} : { viewOrder: v.viewOrder }),
+              }
+            : {
+                name: v.name,
+                sections: v.sections,
+                ...(v.viewOrder === undefined ? {} : { viewOrder: v.viewOrder }),
+              };
         const result = await api.command(d.kind === 'order' ? 'saveOrder' : 'saveTemplate', {
           id: d.id,
           expectedVersion: v.version,
@@ -148,10 +164,11 @@
     return r;
   }
   function progress(o) {
-    const rows = o.sections.filter((s) => s.type === 'items').flatMap((s) => s.items);
+    const rows = o.sections.filter((s) => sectionView(s) === 'items').flatMap((s) => s.items);
     return { total: rows.length, done: rows.filter((r) => r.d).length };
   }
   function orderTitle(o) {
+    if (o.block !== undefined) return 'Блок ' + o.block;
     return o.number ? 'Заказ № ' + o.number : o.name || 'Новый заказ';
   }
   function open(kind, id) {
@@ -160,44 +177,102 @@
     if (kind === 'order') area = record(kind, id)?.status === 'archived' ? 'archive' : 'active';
     render();
   }
-  function sidebar() {
-    const orders = snapshot.orders.filter(
-      (o) => o.status === (area === 'archive' ? 'archived' : 'active'),
-    );
-    return `<aside class="sidebar"><div class="brand">${icon('checklist')}<div>Фокус<small>Мои заказы</small></div></div>${button('new-order', 'Новый заказ', 'plus', 'primary')}<nav class="nav" aria-label="Список заказов">${['active', 'archive'].map((a) => `<button data-action="area" data-id="${a}" class="${area === a ? 'active' : ''}" aria-pressed="${area === a}">${icon(a === 'active' ? 'checklist' : 'archive')}${a === 'active' ? 'Активные' : 'Архив'}<span class="count">${snapshot.orders.filter((o) => o.status === (a === 'active' ? 'active' : 'archived')).length}</span></button>`).join('')}</nav><div><p class="side-label">${area === 'archive' ? 'Завершённые заказы' : 'В работе'}</p><div class="orders">${
+  function orderList() {
+    const query = searchQuery.trim().toLocaleLowerCase('ru-RU');
+    const orders = snapshot.orders
+      .map((o) => drafts.get('order:' + o.id)?.value || o)
+      .filter(
+        (o) =>
+          o.status === (area === 'archive' ? 'archived' : 'active') &&
+          (!query ||
+            [o.number, o.name, o.block || ''].some((text) =>
+              text.toLocaleLowerCase('ru-RU').includes(query),
+            )),
+      );
+    return (
       orders
         .map((o) => {
-          const p = progress(drafts.get('order:' + o.id)?.value || o);
-          return `<button class="order ${current?.id === o.id ? 'active' : ''}" data-action="open-order" data-id="${esc(o.id)}" aria-pressed="${current?.id === o.id}"><strong>${esc(orderTitle(o))}</strong><small>${esc(o.name || 'Без названия')}</small><progress value="${p.done}" max="${p.total || 1}" aria-label="Выполнено ${p.done} из ${p.total}"></progress></button>`;
+          const p = progress(o);
+          return `<button class="order ${current?.id === o.id ? 'active' : ''}" data-action="open-order" data-id="${esc(o.id)}" aria-pressed="${current?.id === o.id}"><strong>${esc(orderTitle(o))}</strong><small>${esc(o.block === undefined ? o.name || 'Без названия' : o.number ? 'Заказ № ' + o.number : 'Без номера заказа')}</small><progress value="${p.done}" max="${p.total || 1}" aria-label="Выполнено ${p.done} из ${p.total}"></progress></button>`;
         })
-        .join('') || '<p class="side-label">Пока нет заказов</p>'
-    }</div></div><div class="sidefooter">${button('templates', 'Шаблоны заказов', 'layout-template')}${button('backups', 'Резервные копии', 'database')}${button('folder', 'Папка данных', 'folder')}</div></aside>`;
+        .join('') ||
+      `<p class="side-label" role="status">${query ? 'Заказы не найдены' : 'Пока нет заказов'}</p>`
+    );
+  }
+  function sidebar() {
+    return `<aside class="sidebar"><div class="brand">${icon('checklist')}<div>Фокус<small>Мои заказы</small></div></div>${button('new-order', 'Новый заказ', 'plus', 'primary')}<nav class="nav" aria-label="Список заказов">${['active', 'archive'].map((a) => `<button data-action="area" data-id="${a}" class="${area === a ? 'active' : ''}" aria-pressed="${area === a}">${icon(a === 'active' ? 'checklist' : 'archive')}${a === 'active' ? 'Активные' : 'Архив'}<span class="count">${snapshot.orders.filter((o) => o.status === (a === 'active' ? 'active' : 'archived')).length}</span></button>`).join('')}</nav><div><div class="order-search"><label for="order-search">Поиск заказов</label><input id="order-search" type="search" placeholder="Номер, блок, название" value="${esc(searchQuery)}" autocomplete="off"></div><p class="side-label">${area === 'archive' ? 'Завершённые заказы' : 'В работе'}</p><div class="orders">${orderList()}</div></div><div class="sidefooter">${button('templates', 'Шаблоны заказов', 'layout-template')}${button('backups', 'Резервные копии', 'database')}${button('folder', 'Папка данных', 'folder')}</div></aside>`;
   }
   function tabbar() {
     return `<nav class="tabs" aria-label="Открытые вкладки">${tabs.map((t) => `<div class="tab ${current?.kind === t.kind && current?.id === t.id ? 'active' : ''}"><button data-action="tab" data-kind="${t.kind}" data-id="${esc(t.id || '')}">${esc(t.kind === 'order' ? orderTitle(record('order', t.id) || { name: 'Заказ' }) : t.kind === 'templates' ? 'Шаблоны' : 'Резервные копии')}</button><button class="icon" data-action="close-tab" data-kind="${t.kind}" data-id="${esc(t.id || '')}" aria-label="Закрыть вкладку">${icon('x')}</button></div>`).join('')}</nav>`;
   }
   function sectionNav() {
-    return `<nav class="sectionnav" aria-label="Разделы ${current?.kind === 'templates' ? 'шаблона' : 'заказа'}">${[
-      ['items', 'Проверка'],
-      ['fields', 'Параметры'],
-      ['q', 'Вопросы'],
-      ['notes', 'Заметки'],
-    ]
-      .filter(([v]) => current?.kind !== 'templates' || v !== 'notes')
+    const d = activeDraft(),
+      readonly = d?.value.status === 'archived';
+    return `<nav class="sectionnav" aria-label="Разделы ${current?.kind === 'templates' ? 'шаблона' : 'заказа'}">${(
+      d?.value.viewOrder || defaultViews
+    )
+      .filter((v) => current?.kind !== 'templates' || v !== 'notes')
       .map(
-        ([v, label]) =>
-          `<button data-action="view" data-id="${v}" class="${view === v ? 'active' : ''}" aria-pressed="${view === v}">${label}</button>`,
+        (v) =>
+          `<button data-action="view" data-id="${v}" ${!readonly ? `data-move="view" title="Перетащите вкладку или нажмите Alt + стрелку влево/вправо" aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight"` : ''} class="${view === v ? 'active' : ''}" aria-pressed="${view === v}">${!readonly ? icon('grip-vertical') : ''}${viewLabels[v]}</button>`,
       )
       .join('')}</nav>`;
   }
+  function questionEntries(value) {
+    let n = 0;
+    return value.sections
+      .filter((s) => s.type === 'q')
+      .flatMap((s) =>
+        s.items
+          .filter((r) => r.t.trim())
+          .map((r) => ({ section: s.id, row: r.id, number: ++n, text: r.t, done: r.d })),
+      );
+  }
+  function updateQuestionNumbers(d) {
+    if (view !== 'q') return;
+    const entries = questionEntries(d.value);
+    for (const el of app.querySelectorAll('.question-slot')) {
+      const entry = entries.find((q) => q.row === el.dataset.numberRow);
+      el.innerHTML = entry
+        ? `<span class="question-number" aria-label="Номер вопроса ${entry.number}">${entry.number}.</span>`
+        : '';
+    }
+  }
+  function handle(kind, id, section = '') {
+    const label = kind === 'section' ? 'Переместить раздел' : 'Переместить пункт';
+    return `<button type="button" class="icon move-handle" data-move="${kind}" data-id="${esc(id)}" ${section ? `data-section="${esc(section)}" data-row="${esc(id)}"` : ''} aria-label="${label}" title="${label}: перетащите или используйте стрелки вверх/вниз" aria-keyshortcuts="ArrowUp ArrowDown">${icon('grip-vertical')}</button>`;
+  }
+  function rowMarkup(s, r, i, readonly, entries) {
+    const attributes = `data-section="${esc(s.id)}" data-row="${esc(r.id)}"`;
+    const grip = readonly ? '' : handle('row', r.id, s.id);
+    const remove = readonly
+      ? ''
+      : button(
+          'delete-row',
+          '',
+          'trash',
+          'icon',
+          `data-section="${esc(s.id)}" data-id="${esc(r.id)}" aria-label="Удалить ${s.type === 'fields' ? 'параметр' : s.type === 'q' ? 'вопрос' : 'пункт'} ${i + 1}"`,
+        );
+    if (s.type === 'fields')
+      return `<div class="row fieldrow ${readonly ? 'readonly' : ''}" ${attributes}>${grip}<input data-field="k" ${attributes} value="${esc(r.k)}" aria-label="Название параметра ${i + 1}" ${readonly ? 'disabled' : ''}><input data-field="v" ${attributes} value="${esc(r.v)}" aria-label="Значение параметра ${i + 1}" ${readonly ? 'disabled' : ''}>${remove}</div>`;
+    const entry = entries.find((q) => q.row === r.id);
+    const number =
+      s.type === 'q'
+        ? `<span class="question-slot" data-number-row="${esc(r.id)}">${entry ? `<span class="question-number" aria-label="Номер вопроса ${entry.number}">${entry.number}.</span>` : ''}</span>`
+        : '';
+    return `<div class="row ${r.d ? 'done' : ''}" ${attributes}>${grip}<input type="checkbox" data-field="d" ${attributes} ${r.d ? 'checked' : ''} ${readonly ? 'disabled' : ''} aria-label="${s.type === 'q' ? 'Вопрос решён' : 'Пункт выполнен'} ${i + 1}">${number}<textarea class="text" data-field="t" ${attributes} aria-label="${s.type === 'q' ? 'Вопрос' : 'Пункт проверки'} ${i + 1}" rows="1" ${readonly ? 'disabled' : ''}>${esc(r.t)}</textarea>${remove}</div>`;
+  }
   function sections(d, readonly) {
-    const v = d.value;
+    const visible = d.value.sections.filter((s) => sectionView(s) === view);
+    const entries = questionEntries(d.value);
     return (
-      v.sections
-        .filter((s) => s.type === view)
+      visible
         .map(
-          (s) =>
-            `<section class="section" data-section="${esc(s.id)}"><header class="sectionhead"><h2>${esc(s.title || 'Без названия')}</h2><div class="actions">${!readonly ? button('rename-section', '', 'edit', 'icon', `data-id="${esc(s.id)}" aria-label="Изменить название раздела"`) + button('delete-section', '', 'trash', 'icon', `data-id="${esc(s.id)}" aria-label="Удалить раздел"`) : ''}</div></header><div class="sectionbody">${s.items.map((r, i) => (s.type === 'fields' ? `<div class="row fieldrow"><input data-field="k" data-section="${esc(s.id)}" data-row="${esc(r.id)}" value="${esc(r.k)}" aria-label="Название параметра ${i + 1}" ${readonly ? 'disabled' : ''}><input data-field="v" data-section="${esc(s.id)}" data-row="${esc(r.id)}" value="${esc(r.v)}" aria-label="Значение параметра ${i + 1}" ${readonly ? 'disabled' : ''}>${!readonly ? button('delete-row', '', 'trash', 'icon', `data-section="${esc(s.id)}" data-id="${esc(r.id)}" aria-label="Удалить параметр ${i + 1}"`) : ''}</div>` : `<div class="row ${r.d ? 'done' : ''}"><input type="checkbox" data-field="d" data-section="${esc(s.id)}" data-row="${esc(r.id)}" ${r.d ? 'checked' : ''} ${readonly ? 'disabled' : ''} aria-label="${s.type === 'q' ? 'Вопрос решён' : 'Пункт выполнен'} ${i + 1}"><textarea class="text" data-field="t" data-section="${esc(s.id)}" data-row="${esc(r.id)}" aria-label="${s.type === 'q' ? 'Вопрос' : 'Пункт проверки'} ${i + 1}" rows="${Math.max(1, Math.min(6, String(r.t).split('\n').length))}" ${readonly ? 'disabled' : ''}>${esc(r.t)}</textarea>${!readonly ? button('delete-row', '', 'trash', 'icon', `data-section="${esc(s.id)}" data-id="${esc(r.id)}" aria-label="Удалить ${s.type === 'q' ? 'вопрос' : 'пункт'} ${i + 1}"`) : ''}</div>`)).join('') || '<p class="side-label">В разделе пока нет записей</p>'}${!readonly ? button('add-row', s.type === 'fields' ? 'Добавить параметр' : s.type === 'q' ? 'Добавить вопрос' : 'Добавить пункт', 'plus', 'addrow', `data-id="${esc(s.id)}"`) : ''}</div></section>`,
+          (s) => `<section class="section" data-section="${esc(s.id)}">
+      <header class="sectionhead">${readonly ? '' : handle('section', s.id)}<h2>${esc(s.title || 'Без названия')}</h2><div class="actions">${!readonly ? button('rename-section', '', 'edit', 'icon', `data-id="${esc(s.id)}" aria-label="Изменить название раздела"`) + button('delete-section', '', 'trash', 'icon', `data-id="${esc(s.id)}" aria-label="Удалить раздел"`) : ''}</div></header>
+      <div class="sectionbody">${s.items.map((r, i) => rowMarkup(s, r, i, readonly, entries)).join('') || '<p class="side-label">В разделе пока нет записей</p>'}${!readonly ? button('add-row', s.type === 'fields' ? 'Добавить параметр' : s.type === 'q' ? 'Добавить вопрос' : 'Добавить пункт', 'plus', 'addrow', `data-id="${esc(s.id)}"`) : ''}</div>
+    </section>`,
         )
         .join('') ||
       `<div class="empty"><h2>В этом виде пока нет разделов</h2><p>${readonly ? 'Заказ доступен для просмотра.' : 'Добавьте раздел, затем свои пункты.'}</p></div>`
@@ -237,7 +312,7 @@
         .filter((s) => s.type === 'q')
         .flatMap((s) => s.items)
         .filter((r) => !r.d).length;
-    return `<header class="header"><div><h1>${esc(orderTitle(o))}</h1><p>${esc(o.name || 'Название не задано')} · ${ro ? 'Архив · только просмотр' : 'Активный заказ'}</p></div><div class="actions">${!ro ? button('rename-order', 'Номер и название', 'edit') : ''}${button(ro ? 'restore' : 'archive', ro ? 'Вернуть в работу' : 'Завершить заказ', ro ? 'restore' : 'check', 'primary')}${button('delete-order', 'Удалить заказ', 'trash', 'danger')}</div></header>${ro ? '<div class="notice">Этот заказ завершён. Чтобы изменить его, верните заказ в работу.</div>' : ''}<div class="summary"><div><strong>${p.done} из ${p.total}</strong><br><small>пунктов проверено</small></div><progress value="${p.done}" max="${p.total || 1}" aria-label="Прогресс проверки"></progress><small>${q} нерешённых вопросов</small></div>${editor(d, ro)}`;
+    return `<header class="header"><div><h1>${esc(orderTitle(o))}</h1><p>${esc(o.block !== undefined ? (o.number ? 'Заказ № ' + o.number : 'Номер заказа не задан') : o.name || 'Название не задано')} · ${ro ? 'Архив · только просмотр' : 'Активный заказ'}</p></div><div class="actions">${!ro ? button('rename-order', 'Номер и блок', 'edit') : ''}${button(ro ? 'restore' : 'archive', ro ? 'Вернуть в работу' : 'Завершить заказ', ro ? 'restore' : 'check', 'primary')}${button('delete-order', 'Удалить заказ', 'trash', 'danger')}</div></header>${ro ? '<div class="notice">Этот заказ завершён. Чтобы изменить его, верните заказ в работу.</div>' : ''}<div class="summary"><div><strong>${p.done} из ${p.total}</strong><br><small>пунктов проверено</small></div><progress value="${p.done}" max="${p.total || 1}" aria-label="Прогресс проверки"></progress><small>${q} нерешённых вопросов</small></div>${editor(d, ro)}`;
   }
   function templateView() {
     if (!snapshot.templates.some((t) => t.id === selectedTemplate))
@@ -261,18 +336,27 @@
   function render() {
     const focused = document.activeElement;
     const previous =
-      app.contains(focused) && focused.dataset.action ? { ...focused.dataset } : null;
+      app.contains(focused) &&
+      (focused.dataset.action || focused.dataset.move || focused.dataset.field)
+        ? { ...focused.dataset }
+        : null;
+    const selection =
+      focused?.selectionStart === undefined ? null : [focused.selectionStart, focused.selectionEnd];
+    const scrollTop = app.querySelector('.workspace')?.scrollTop || 0;
     app.innerHTML = `<div class="shell">${sidebar()}<main class="main">${tabbar()}<div class="workspace"><div class="content">${warnings.length ? `<div class="notice error" role="alert">${warnings.map((w) => esc(errorText(w))).join('<br>')}</div>` : ''}${current?.kind === 'order' ? orderView() : current?.kind === 'templates' ? templateView() : current?.kind === 'backups' ? backupView() : empty()}</div></div><footer id="save-status" class="statusbar"></footer></main></div>`;
     updateStatus();
     fitRows();
     if (previous) {
-      const next = [...app.querySelectorAll('[data-action]')].find((el) =>
+      const next = [...app.querySelectorAll('[data-action],[data-move],[data-field]')].find((el) =>
         Object.entries(previous).every(([key, value]) => el.dataset[key] === value),
       );
       (
         next || app.querySelector('.tab.active button,.sectionnav button.active,.sidebar button')
       )?.focus({ preventScroll: true });
+      if (selection && next?.setSelectionRange && next.type !== 'checkbox')
+        next.setSelectionRange(...selection);
     }
+    app.querySelector('.workspace').scrollTop = scrollTop;
   }
   window.addEventListener('resize', () => requestAnimationFrame(fitRows));
   document.fonts.ready.then(fitRows);
@@ -298,6 +382,9 @@
   }
   function field(label, name, value = '') {
     return `<label class="formlabel">${label}<input name="${name}" value="${esc(value)}" ${name === 'name' ? 'required' : ''}></label>`;
+  }
+  function blockField(value = '', required = true) {
+    return `<label class="formlabel">Блок<input name="block" value="${esc(value)}" inputmode="numeric" pattern="[0-9]+" title="Введите только цифры, например 445" ${required ? 'required' : ''}></label>`;
   }
   function confirm(title, description, action, submitLabel = 'Подтвердить') {
     modal(title, '', submitLabel, action, description);
@@ -338,8 +425,279 @@
       },
     );
   }
+  function moveData(el) {
+    if (!el) return null;
+    if (el.dataset.move === 'view') return { kind: 'view', id: el.dataset.id };
+    if (el.dataset.move === 'section') return { kind: 'section', id: el.dataset.id };
+    if (el.dataset.move === 'row')
+      return { kind: 'row', id: el.dataset.row, section: el.dataset.section };
+    return null;
+  }
+  function moveList(d, m) {
+    if (m.kind === 'view')
+      return (d.value.viewOrder || defaultViews).filter(
+        (v) => d.kind !== 'template' || v !== 'notes',
+      );
+    if (m.kind === 'section')
+      return d.value.sections.filter((s) => sectionView(s) === view).map((s) => s.id);
+    return (
+      d.value.sections
+        .find((s) => s.id === m.section && sectionView(s) === view)
+        ?.items.map((r) => r.id) || []
+    );
+  }
+  function reorder(d, source, target) {
+    if (
+      !d ||
+      d.value.status === 'archived' ||
+      source.kind !== target.kind ||
+      source.section !== target.section
+    )
+      return;
+    const ids = moveList(d, source),
+      from = ids.indexOf(source.id),
+      to = ids.indexOf(target.id);
+    if (from < 0 || to < 0 || from === to) return;
+    ids.splice(from, 1);
+    ids.splice(to, 0, source.id);
+    if (source.kind === 'view') {
+      // Template hides Notes but still keeps its slot for inheritance by new orders.
+      let i = 0;
+      d.value.viewOrder = (d.value.viewOrder || defaultViews).map((v) =>
+        d.kind === 'template' && v === 'notes' ? v : ids[i++],
+      );
+    } else if (source.kind === 'section') {
+      const byId = new Map(d.value.sections.map((s) => [s.id, s]));
+      let i = 0;
+      d.value.sections = d.value.sections.map((s) =>
+        sectionView(s) === view ? byId.get(ids[i++]) : s,
+      );
+    } else {
+      const s = d.value.sections.find((s) => s.id === source.section),
+        byId = new Map(s.items.map((r) => [r.id, r]));
+      s.items = ids.map((id) => byId.get(id));
+    }
+    touch(d);
+    render();
+  }
+  function dropTarget(e, kind) {
+    const explicit = e.target.closest('[data-move]');
+    if (explicit) return moveData(explicit);
+    if (kind === 'row') {
+      const row = e.target.closest('.row[data-row]');
+      if (row) return { kind, id: row.dataset.row, section: row.dataset.section };
+    } else if (kind === 'section') {
+      const s = e.target.closest('section[data-section]');
+      if (s) return { kind, id: s.dataset.section };
+    }
+    return null;
+  }
+  function canDrop(target) {
+    const d = activeDraft();
+    return (
+      moving &&
+      target &&
+      d === moving.draft &&
+      view === moving.view &&
+      d.value.status !== 'archived' &&
+      moving.kind === target.kind &&
+      moving.section === target.section &&
+      moveList(d, moving).includes(target.id)
+    );
+  }
+  function clearDrag() {
+    app
+      .querySelectorAll('.dragging,.drop-target')
+      .forEach((el) => el.classList.remove('dragging', 'drop-target'));
+  }
+  let scrollFrame = 0,
+    suppressedMoveClick = null;
+  function pointerTarget(x, y, kind) {
+    const target = document.elementFromPoint(x, y);
+    return target ? dropTarget({ target }, kind) : null;
+  }
+  function markTarget(x, y) {
+    app.querySelectorAll('.drop-target').forEach((el) => el.classList.remove('drop-target'));
+    const target = pointerTarget(x, y, moving?.kind);
+    if (!canDrop(target)) return;
+    const el = document.elementFromPoint(x, y);
+    const destination =
+      target.kind === 'view'
+        ? el.closest('[data-move=view]')
+        : target.kind === 'section'
+          ? el.closest('section')
+          : el.closest('.row');
+    destination?.classList.add('drop-target');
+  }
+  function autoScroll() {
+    scrollFrame = 0;
+    if (!moving?.moved) return;
+    const workspace = app.querySelector('.workspace'),
+      rect = workspace.getBoundingClientRect();
+    const { x, y } = moving;
+    if (
+      performance.now() - moving.lastMove > 120 &&
+      x >= rect.left &&
+      x <= rect.right &&
+      y >= rect.top &&
+      y <= rect.bottom
+    ) {
+      const step = y < rect.top + 48 ? -14 : y > rect.bottom - 48 ? 14 : 0;
+      if (step) {
+        workspace.scrollTop += step;
+        markTarget(x, y);
+      }
+    }
+    scrollFrame = requestAnimationFrame(autoScroll);
+  }
+  function cancelMove() {
+    cancelAnimationFrame(scrollFrame);
+    const previous = moving;
+    moving = null;
+    clearDrag();
+    if (previous && app.hasPointerCapture(previous.pointerId))
+      app.releasePointerCapture(previous.pointerId);
+  }
+  // Pointer capture keeps the gesture local, prevents native text drops into fields,
+  // and works while the workspace scrolls or the window does not own OS drag focus.
+  app.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    const handle = e.target.closest('[data-move]'),
+      data = moveData(handle),
+      d = activeDraft();
+    if (!data || !d || d.value.status === 'archived') return;
+    moving = {
+      ...data,
+      draft: d,
+      view,
+      handle,
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
+      x: e.clientX,
+      y: e.clientY,
+      moved: false,
+    };
+  });
+  app.addEventListener('pointermove', (e) => {
+    if (!moving || e.pointerId !== moving.pointerId) return;
+    moving.x = e.clientX;
+    moving.y = e.clientY;
+    moving.lastMove = performance.now();
+    if (!moving.moved && Math.hypot(e.clientX - moving.startX, e.clientY - moving.startY) < 6)
+      return;
+    if (!moving.moved) {
+      app.setPointerCapture(e.pointerId);
+      moving.moved = true;
+      moving.handle.classList.add('dragging');
+      scrollFrame = requestAnimationFrame(autoScroll);
+    }
+    e.preventDefault();
+    markTarget(e.clientX, e.clientY);
+  });
+  app.addEventListener('pointerup', (e) => {
+    if (!moving || e.pointerId !== moving.pointerId) return;
+    const source = moving,
+      target = pointerTarget(e.clientX, e.clientY, source.kind);
+    const valid = source.moved && canDrop(target);
+    if (source.moved) {
+      e.preventDefault();
+      suppressedMoveClick = { kind: source.kind, id: source.id, until: performance.now() + 250 };
+    }
+    cancelMove();
+    if (valid)
+      safe(() => {
+        if (activeDraft() === source.draft && view === source.view)
+          reorder(source.draft, source, target);
+      }).catch((ex) => {
+        error = errorText(ex);
+        updateStatus();
+      });
+  });
+  app.addEventListener('pointercancel', cancelMove);
+  app.addEventListener('lostpointercapture', (e) => {
+    if (moving && e.pointerId === moving.pointerId && !app.hasPointerCapture(e.pointerId))
+      cancelMove();
+  });
+  app.addEventListener('dragstart', (e) => {
+    if (e.target.closest('[data-move]')) e.preventDefault();
+  });
+  app.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && moving) {
+      e.preventDefault();
+      cancelMove();
+      return;
+    }
+    const data = moveData(e.target.closest('[data-move]')),
+      d = activeDraft();
+    if (data && d?.value.status !== 'archived') {
+      const direction =
+        data.kind === 'view' && e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey
+          ? { ArrowLeft: -1, ArrowRight: 1 }[e.key]
+          : data.kind !== 'view' && !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey
+            ? { ArrowUp: -1, ArrowDown: 1 }[e.key]
+            : undefined;
+      if (direction) {
+        e.preventDefault();
+        const ids = moveList(d, data),
+          target = ids[ids.indexOf(data.id) + direction];
+        if (target)
+          safe(() => {
+            if (activeDraft() === d) reorder(d, data, { ...data, id: target });
+          }).catch((ex) => {
+            error = errorText(ex);
+            updateStatus();
+          });
+        return;
+      }
+    }
+    const el = e.target;
+    if (
+      !el.matches('.fieldrow input[data-field]') ||
+      el.disabled ||
+      e.altKey ||
+      e.ctrlKey ||
+      e.metaKey ||
+      e.shiftKey ||
+      e.isComposing
+    )
+      return;
+    const row = el.closest('.fieldrow'),
+      container = row.closest('.sectionbody');
+    let target;
+    if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+      const rows = [...container.querySelectorAll('.fieldrow')],
+        next = rows[rows.indexOf(row) + (e.key === 'ArrowUp' ? -1 : 1)];
+      target = next?.querySelector(`[data-field="${el.dataset.field}"]`);
+    } else if (el.selectionStart === el.selectionEnd) {
+      if (e.key === 'ArrowLeft' && el.selectionStart === 0 && el.dataset.field === 'v')
+        target = row.querySelector('[data-field=k]');
+      if (
+        e.key === 'ArrowRight' &&
+        el.selectionStart === el.value.length &&
+        el.dataset.field === 'k'
+      )
+        target = row.querySelector('[data-field=v]');
+    }
+    if (target && !target.disabled) {
+      e.preventDefault();
+      target.focus();
+      const position =
+        e.key === 'ArrowLeft'
+          ? target.value.length
+          : e.key === 'ArrowRight'
+            ? 0
+            : Math.min(el.selectionStart, target.value.length);
+      target.setSelectionRange(position, position);
+    }
+  });
   app.addEventListener('input', (e) => {
     const el = e.target;
+    if (el.id === 'order-search') {
+      searchQuery = el.value;
+      app.querySelector('.orders').innerHTML = orderList();
+      return;
+    }
     if (!el.dataset.field) return;
     const d = activeDraft();
     if (!d || d.value.status === 'archived') return;
@@ -355,6 +713,7 @@
     } else d.value[f] = el.value;
     touch(d);
     updateMetrics(d);
+    if (f === 't') updateQuestionNumbers(d);
   });
   app.addEventListener('change', (e) => {
     if (e.target.id === 'template-select') {
@@ -370,6 +729,16 @@
   app.addEventListener('click', async (e) => {
     const b = e.target.closest('button[data-action]');
     if (!b) return;
+    if (
+      e.detail &&
+      suppressedMoveClick &&
+      b.dataset.move === suppressedMoveClick?.kind &&
+      b.dataset.id === suppressedMoveClick?.id &&
+      performance.now() < suppressedMoveClick.until
+    ) {
+      e.preventDefault();
+      return;
+    }
     const a = b.dataset.action,
       id = b.dataset.id;
     try {
@@ -386,11 +755,8 @@
         return;
       }
       if (a === 'copy') {
-        const qs = activeDraft()
-          .value.sections.filter((s) => s.type === 'q')
-          .flatMap((s) => s.items)
-          .filter((r) => !r.d && r.t.trim());
-        await api.copyText(qs.map((q, i) => `${i + 1}. ${q.t}`).join('\n'));
+        const qs = questionEntries(activeDraft().value).filter((q) => !q.done);
+        await api.copyText(qs.map((q) => `${q.number}. ${q.text}`).join('\n'));
         message = qs.length ? 'Вопросы скопированы' : 'Нет нерешённых вопросов для копирования';
         updateStatus();
         return;
@@ -421,7 +787,7 @@
           modal(
             'Новый заказ',
             field('Номер заказа', 'number') +
-              field('Название', 'name') +
+              blockField() +
               `<label class="formlabel">Шаблон<select name="templateId">${snapshot.templates.map((t) => `<option value="${esc(t.id)}">${esc(t.name)}</option>`).join('')}</select></label>`,
             'Создать заказ',
             async (f) => {
@@ -429,7 +795,8 @@
               await command('createOrder', {
                 templateId: f.get('templateId'),
                 number: f.get('number'),
-                name: f.get('name'),
+                name: 'Блок ' + f.get('block'),
+                block: f.get('block'),
               });
               open('order', snapshot.orders.find((o) => !before.has(o.id)).id);
               view = 'items';
@@ -437,13 +804,19 @@
           );
         } else if (a === 'rename-order' && !ro) {
           modal(
-            'Номер и название',
+            'Номер и блок',
             field('Номер заказа', 'number', d.value.number) +
-              field('Название', 'name', d.value.name),
+              blockField(d.value.block || '', d.value.block !== undefined) +
+              (d.value.block === undefined
+                ? `<p>Текущее название: ${esc(d.value.name)}. Оставьте блок пустым, чтобы сохранить его.</p>`
+                : ''),
             'Сохранить',
             async (f) => {
               d.value.number = f.get('number');
-              d.value.name = f.get('name');
+              if (f.get('block')) {
+                d.value.block = f.get('block');
+                d.value.name = 'Блок ' + d.value.block;
+              }
               touch(d);
               if (!(await window.focusFlush())) throw new Error(d.error);
             },
@@ -505,10 +878,25 @@
             },
           );
         } else if (a === 'add-section' && !ro) {
-          modal('Новый раздел', field('Название раздела', 'name'), 'Добавить', async (f) => {
-            d.value.sections.push({ id: uid(), title: f.get('name'), type: view, items: [] });
-            touch(d);
-          });
+          modal(
+            'Новый раздел',
+            field('Название раздела', 'name') +
+              (view === 'fields'
+                ? '<label class="formlabel">Тип раздела<select name="type"><option value="fields">Таблица параметров</option><option value="items">Список с галочками</option></select></label>'
+                : ''),
+            'Добавить',
+            async (f) => {
+              const type = view === 'fields' ? f.get('type') : view;
+              d.value.sections.push({
+                id: uid(),
+                title: f.get('name'),
+                type,
+                ...(type !== view ? { view } : {}),
+                items: [],
+              });
+              touch(d);
+            },
+          );
         } else if (a === 'rename-section' && !ro) {
           const s = d.value.sections.find((s) => s.id === id);
           modal('Название раздела', field('Название', 'name', s.title), 'Сохранить', async (f) => {

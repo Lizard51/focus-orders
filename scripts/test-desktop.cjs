@@ -52,10 +52,10 @@ async function scenario(name, fn) {
   report.scenarios.push({ name, result: 'PASS' });
   console.log('PASS ' + name);
 }
-async function create(number, name) {
+async function create(number, block) {
   await action('new-order').first().click();
   await page.locator('#dialog input[name=number]').fill(number);
-  await page.locator('#dialog input[name=name]').fill(name);
+  await page.locator('#dialog input[name=block]').fill(block);
   await page.locator('#dialog button[type=submit]').click();
   await page.locator('#dialog').waitFor({ state: 'hidden' });
 }
@@ -82,8 +82,8 @@ async function close() {
     ({ app: application, p: page } = await launch(directories.normal));
     await scenario('Empty database, two independent orders and closable tabs', async () => {
       assert.equal((await state()).orders.length, 0);
-      await create('101', 'Первая кухня');
-      await create('102', 'Вторая кухня');
+      await create('101', '101');
+      await create('102', '102');
       assert.equal((await state()).orders.length, 2);
       await page.locator('.order').filter({ hasText: '101' }).click();
       assert.match(await page.locator('h1').innerText(), /101/);
@@ -161,7 +161,7 @@ async function close() {
       await flushed();
       await action('new-order').click();
       await page.locator('#dialog input[name=number]').fill('103');
-      await page.locator('#dialog input[name=name]').fill('По особому шаблону');
+      await page.locator('#dialog input[name=block]').fill('103');
       await page.locator('#dialog select').selectOption({ label: 'Особый шаблон' });
       await confirm();
       assert.ok(
@@ -264,7 +264,7 @@ async function close() {
       ({ app: application, p: page } = await launch(directories.fault, [
         '--focus-test-save-failure',
       ]));
-      await create('501', 'Ошибка записи');
+      await create('501', '501');
       await page.locator('[data-action=view][data-id=notes]').click();
       await page.locator('[data-field=notes]').fill('Несохранённый ввод остаётся');
       assert.equal(await page.evaluate(() => window.focusFlush()), false);

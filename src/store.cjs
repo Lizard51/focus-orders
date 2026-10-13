@@ -23,18 +23,35 @@ function identity(x, seen, label) {
   if (seen.has(x)) invalid('duplicate ' + label);
   seen.add(x);
 }
+function viewOrder(x) {
+  if (
+    !Array.isArray(x) ||
+    x.length !== 4 ||
+    new Set(x).size !== 4 ||
+    x.some((v) => !['items', 'fields', 'q', 'notes'].includes(v))
+  )
+    invalid('viewOrder');
+  return copy(x);
+}
+function block(x) {
+  string(x, 'block', true);
+  if (!/^\d+$/.test(x)) invalid('block');
+  return x;
+}
 function sections(raw, normalize = false) {
   if (!Array.isArray(raw)) invalid('sections');
   const ids = new Set(),
     itemIds = new Set();
   return raw.map((r) => {
-    fields(r, ['id', 'title', 'type', 'items'], 'section');
+    fields(r, ['id', 'title', 'type', 'items', 'view'], 'section');
     const s = copy(r);
     if (normalize && s.id === undefined) s.id = randomUUID();
     identity(s.id, ids, 'section.id');
     string(s.title, 'title');
     if (normalize && /^ВОПРОСЫ/i.test(s.title)) s.type = 'q';
     if (!['items', 'q', 'fields'].includes(s.type)) invalid('section.type');
+    if (s.view !== undefined && s.view !== s.type && !(s.type === 'items' && s.view === 'fields'))
+      invalid('section.view');
     if (!Array.isArray(s.items)) invalid('items');
     s.items = s.items.map((r) => {
       fields(r, s.type === 'fields' ? ['id', 'k', 'v'] : ['id', 't', 'd'], 'item');
@@ -64,10 +81,11 @@ function validate(db) {
   const tids = new Set(),
     oids = new Set();
   for (const t of db.templates) {
-    fields(t, ['id', 'name', 'version', 'sections'], 'template');
+    fields(t, ['id', 'name', 'version', 'sections', 'viewOrder'], 'template');
     identity(t.id, tids, 'template.id');
     string(t.name, 'template.name', true);
     integer(t.version, 'version', 1);
+    if (t.viewOrder !== undefined) viewOrder(t.viewOrder);
     sections(t.sections);
   }
   for (const o of db.orders) {
@@ -85,11 +103,18 @@ function validate(db) {
         'templateId',
         'templateName',
         'sections',
+        'block',
+        'viewOrder',
       ],
       'order',
     );
     identity(o.id, oids, 'order.id');
     for (const k of ['number', 'name', 'notes', 'templateId', 'templateName']) string(o[k], k);
+    if (o.block !== undefined) {
+      block(o.block);
+      if (o.name !== 'Блок ' + o.block) invalid('block/name');
+    }
+    if (o.viewOrder !== undefined) viewOrder(o.viewOrder);
     for (const k of ['createdAt', 'updatedAt']) {
       string(o[k], k, true);
       if (!Number.isFinite(Date.parse(o[k]))) invalid(k);
@@ -321,12 +346,12 @@ class Store {
   }
   async execute(name, p) {
     const allowed = {
-      createOrder: ['templateId', 'number', 'name'],
+      createOrder: ['templateId', 'number', 'name', 'block'],
       saveOrder: ['id', 'expectedVersion', 'patch'],
       archiveOrder: ['id'],
       restoreOrder: ['id'],
       deleteOrder: ['id', 'expectedVersion'],
-      createTemplate: ['name', 'sections'],
+      createTemplate: ['name', 'sections', 'viewOrder'],
       saveTemplate: ['id', 'expectedVersion', 'patch'],
       deleteTemplate: ['id'],
       importData: ['text'],
@@ -354,7 +379,9 @@ class Store {
         next.orders.push({
           id: randomUUID(),
           number: p.number,
-          name: p.name,
+          name: p.block === undefined ? p.name : 'Блок ' + block(p.block),
+          ...(p.block === undefined ? {} : { block: p.block }),
+          ...(t.viewOrder === undefined ? {} : { viewOrder: copy(t.viewOrder) }),
           notes: '',
           status: 'active',
           version: 1,
@@ -370,9 +397,17 @@ class Store {
         const o = find(next.orders, p.id);
         if (o.status === 'archived') throw new Error('ARCHIVED: только чтение');
         version(o);
-        fields(p.patch, ['number', 'name', 'notes', 'sections'], 'patch');
+        fields(p.patch, ['number', 'name', 'notes', 'sections', 'block', 'viewOrder'], 'patch');
         for (const k of Object.keys(p.patch))
-          o[k] = k === 'sections' ? sections(p.patch[k]) : string(p.patch[k], k);
+          o[k] =
+            k === 'sections'
+              ? sections(p.patch[k])
+              : k === 'viewOrder'
+                ? viewOrder(p.patch[k])
+                : k === 'block'
+                  ? block(p.patch[k])
+                  : string(p.patch[k], k);
+        if (o.block !== undefined) o.name = 'Блок ' + o.block;
         o.version++;
         o.updatedAt = now;
         break;
@@ -398,14 +433,16 @@ class Store {
           name: p.name,
           version: 1,
           sections: sections(p.sections),
+          ...(p.viewOrder === undefined ? {} : { viewOrder: viewOrder(p.viewOrder) }),
         });
         break;
       case 'saveTemplate': {
         const t = find(next.templates, p.id);
         version(t);
-        fields(p.patch, ['name', 'sections'], 'patch');
+        fields(p.patch, ['name', 'sections', 'viewOrder'], 'patch');
         if (Object.hasOwn(p.patch, 'name')) t.name = string(p.patch.name, 'name', true);
         if (Object.hasOwn(p.patch, 'sections')) t.sections = sections(p.patch.sections);
+        if (Object.hasOwn(p.patch, 'viewOrder')) t.viewOrder = viewOrder(p.patch.viewOrder);
         t.version++;
         break;
       }

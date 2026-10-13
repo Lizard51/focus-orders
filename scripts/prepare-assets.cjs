@@ -28,6 +28,7 @@ const names = [
   'restore',
   'alert-triangle',
   'checklist',
+  'grip-vertical',
 ];
 const iconsRoot = path.join(__dirname, '../node_modules/@tabler/icons/icons/outline');
 const aliases = { 'layout-template': 'template' };

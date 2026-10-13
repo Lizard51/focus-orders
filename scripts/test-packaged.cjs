@@ -31,7 +31,7 @@ const { randomUUID } = require('node:crypto');
     assert.equal(await p.evaluate(() => typeof window.require), 'undefined');
     await p.locator('[data-action=new-order]').first().click();
     await p.locator('#dialog input[name=number]').fill('701');
-    await p.locator('#dialog input[name=name]').fill('Упакованный заказ');
+    await p.locator('#dialog input[name=block]').fill('701');
     await p.locator('#dialog button[type=submit]').click();
     await p.locator('#dialog').waitFor({ state: 'hidden' });
     await p.locator('[data-action=view][data-id=notes]').click();
